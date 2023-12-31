@@ -5,6 +5,9 @@ library(DT)
 library(tidyr)
 library(lubridate)
 library(readr)
+library(shinydashboard)
+library(ggplot2)
+library(plotly)
 
 # ----- DATA ---------
 
@@ -12,29 +15,52 @@ library(readr)
 df <- read.csv("data.csv", header = TRUE)
 
 # ----- SHINY UI ---------
-ui <- fluidPage(
-  titlePanel("Customer Retention"),
-  
-  sidebarLayout(
-    sidebarPanel(
-      dateRangeInput("dateRange", "Select Date Range:",
-                     start = min(df$date_consultation), end = max(df$date_consultation),
-                     format = "yyyy/m/dd"),
-      selectInput("viewType", "Select View Type:",
-                  choices = c("New Clients Cabinet", "New Clients Groupe", "Revenue", "Cohort monthly"),
-                  selected = "New Clients Cabinet")
-    ),
-    mainPanel(
-      tabsetPanel(
-        tabPanel("Table", DTOutput("dataTable")),
-        tabPanel("Chart", plotOutput("chart"))
+ui <- dashboardPage(
+  dashboardHeader(title = "Customer Retention Dashboard"),
+  dashboardSidebar(
+    sidebarMenu(
+      menuItem("Dashboard", tabName = "dashboard", icon = icon("dashboard")),
+      menuItem("Dashboard alt", tabName = "dashboard_2", icon = icon("chart-line"))
+    )
+  ),
+  dashboardBody(
+    tabItems(
+      tabItem(tabName = "dashboard",
+        fluidRow(
+          box(
+            title = "Date Range Selection",
+            status = "primary",
+            solidHeader = TRUE,
+            collapsible = TRUE,
+            dateRangeInput("dateRange", "Select Date Range:",
+                           start = Sys.Date() - 30, end = Sys.Date(),
+                           format = "yyyy-mm-dd")
+          ),
+          box(
+            title = "View Type",
+            status = "primary",
+            solidHeader = TRUE,
+            collapsible = TRUE,
+            selectInput("viewType", "Select View Type:",
+                        choices = c("New Clients Cabinet", "New Clients Groupe", "Revenue", "Cohort monthly"),
+                        selected = "New Clients Cabinet")
+          )
+        ),
+        fluidRow(
+          box(DTOutput("dataTable"), width = 12, title = "Data Table", status = "primary", solidHeader = TRUE, collapsible = TRUE),
+          box(plotlyOutput("chart"), width = 12, title = "Chart", status = "primary", solidHeader = TRUE, collapsible = TRUE)
+        )
+      ),
+      tabItem(tabName = "dashboard_2",
+        # Todo maybe
       )
     )
   )
 )
 
+
 # ----- SHINY SERVER ---------
-server <- function(input, output) {
+server <- function(input, output, session) {
   filteredData <- reactive({
     startDate <- as.Date(input$dateRange[1], format = "%Y/%m/%d")
     endDate <- as.Date(input$dateRange[2], format = "%Y/%m/%d")
@@ -45,40 +71,69 @@ server <- function(input, output) {
     return(df_filtered)
   })
   
-  output$dataTable <- renderDT({
-    if (input$viewType == "New Clients Cabinet") {
-      datatable(filteredData() %>%
-                  filter(numero_consultation_payante == 1),
-                options = list(pageLength = 5))
-    } else if (input$viewType == "New Clients Groupe") {
-      datatable(filteredData() %>%
-                  filter(numero_consultation_groupe == 1),
-                options = list(pageLength = 5))
-    } else if (input$viewType == "Cohort monthly") {
-      datatable(render_cohort_table(filteredData()))
-    } else {
-      datatable(filteredData(),
-                options = list(pageLength = 5))
+  # Observe changes in viewType and update dateRange for "Cohort monthly"
+  observe({
+    if (input$viewType == "Cohort monthly") {
+      updateDateRangeInput(session, "dateRange", start = "2023-01-01", end = "2023-12-31")
     }
   })
   
-  output$chart <- renderPlot({
+  output$dataTable <- renderDT({
+    df_to_show <- if (input$viewType == "New Clients Cabinet") {
+      filteredData() %>% filter(numero_consultation_payante == 1)
+    } else if (input$viewType == "New Clients Groupe") {
+      filteredData() %>% filter(numero_consultation_groupe == 1)
+    } else if (input$viewType == "Cohort monthly") {
+      render_cohort_table(filteredData())
+    } else {
+      filteredData()
+    }
+    if (input$viewType == "Cohort monthly") {
+      datatable(df_to_show, extensions = 'Buttons', options = list(
+        dom = 'Bfrtip',
+        buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
+        pageLength = 15,
+        lengthMenu = list(c(5, 10, 15, 25, 50, -1), c('5', '10', '15', '25', '50', 'All')),
+        autoWidth = TRUE,
+        responsive = TRUE,
+        options = list(pageLength = 15, lengthMenu = list(c(5, 10, 15, 25, 50, -1), c('5', '10', '15', '25', '50', 'All'))),
+        class = 'cell-border stripe'
+      ))
+    } else {
+      datatable(df_to_show, extensions = 'Buttons', options = list(
+      dom = 'Bfrtip',
+      buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
+      pageLength = 5,
+      lengthMenu = list(c(5, 10, 15, 25, 50, -1), c('5', '10', '15', '25', '50', 'All')),
+      autoWidth = TRUE,
+      responsive = TRUE,
+      class = 'cell-border stripe'
+    ))
+    }
+  })
+  
+  output$chart <- renderPlotly({
+    # Base plot with ggplot2
+    p <- ggplot() + theme_minimal()
+    
     if (input$viewType == "New Clients Cabinet") {
-      ggplot(filteredData() %>% filter(numero_consultation_payante == 1),
-             aes(x = date_consultation)) +
+      p <- ggplot(filteredData() %>% filter(numero_consultation_payante == 1), aes(x = date_consultation)) +
         geom_bar(stat = "count", fill = "skyblue") +
         labs(title = "New Clients (Cabinet) Over Time", x = "Date", y = "Count")
     } else if (input$viewType == "New Clients Groupe") {
-      ggplot(filteredData() %>% filter(numero_consultation_groupe == 1),
-             aes(x = date_consultation)) +
+      p <- ggplot(filteredData() %>% filter(numero_consultation_groupe == 1), aes(x = date_consultation)) +
         geom_bar(stat = "count", fill = "lightcoral") +
         labs(title = "New Clients (Groupe) Over Time", x = "Date", y = "Count")
     } else {
-      ggplot(filteredData(), aes(x = date_consultation, y = montant)) +
+      p <- ggplot(filteredData(), aes(x = date_consultation, y = montant)) +
         geom_line(color = "purple") +
         labs(title = "Revenue Over Time", x = "Date", y = "Total Revenue")
     }
+    
+    # Convert ggplot object to plotly
+    ggplotly(p)
   })
+  
   # ****** Process data for cohort   ****** #
   render_cohort_table <- function(df) {
     # Check for required columns
